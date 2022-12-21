@@ -284,9 +284,7 @@ class MachineBasePlugin:
         .. _attachments: https://api.slack.com/docs/message-attachments
         .. _blocks: https://api.slack.com/reference/block-kit/blocks
         """
-        return await self._client.send_dm_scheduled(
-            when, user, text=text, attachments=attachments, blocks=blocks, **kwargs
-        )
+        return await self._client.send_dm_scheduled(when, user, text=text, attachments=attachments, blocks=blocks, **kwargs)
 
     def emit(self, event: str, **kwargs: Any) -> None:
         """Emit an event
@@ -335,9 +333,11 @@ class Message:
     """
 
     # TODO: create proper class for msg_event
-    def __init__(self, client: SlackClient, msg_event: dict[str, Any], plugin_class_name: str):
+    # TODO: make msg_type an enum
+    def __init__(self, client: SlackClient, msg_event: dict[str, Any], plugin_class_name: str, msg_type: str = "message"):
         self._client = client
         self._msg_event = msg_event
+        self._msg_type = msg_type
         self._fq_plugin_name = plugin_class_name
 
     @property
@@ -346,7 +346,12 @@ class Message:
 
         :return: the User the message was sent by
         """
-        return self._client.users[self._msg_event["user"]]
+        if self._msg_type == "message":
+            return self._client.users[self._msg_event["user"]]
+        elif self._msg_type == "interactive":
+            return self._client.users[self._msg_event["user"]["id"]]
+        else:
+            return ""
 
     @property
     def channel(self) -> Channel:
@@ -354,11 +359,16 @@ class Message:
 
         :return: the Channel the message was sent to
         """
-        return self._client.channels[self._msg_event["channel"]]
+        if self._msg_type == "message":
+            return self._client.channels[self._msg_event["channel"]]
+        elif self._msg_type == "interactive":
+            return self._client.channels[self._msg_event["channel"]["id"]]
+        else:
+            return ""
 
     @property
     def is_dm(self) -> bool:
-        channel_id = self._msg_event["channel"]
+        channel_id = self.channel.id
         return not (channel_id.startswith("C") or channel_id.startswith("G"))
 
     @property
@@ -367,7 +377,25 @@ class Message:
 
         :return: the body (text) of the actual message
         """
-        return self._msg_event["text"]
+        if self._msg_type == "message":
+            return self._msg_event["text"]
+        elif self._msg_type == "interactive":
+            return ""
+        else:
+            return ""
+
+    @property
+    def action(self) -> list[dict]:
+        """The body of the actual message
+
+        :return: the body (text) of the actual message
+        """
+        if self._msg_type == "message":
+            return []
+        elif self._msg_type == "interactive":
+            return self._msg_event["action"]
+        else:
+            return ""
 
     @property
     def at_sender(self) -> str:
@@ -537,9 +565,7 @@ class Message:
         .. _blocks: https://api.slack.com/reference/block-kit/blocks
         """
         if in_thread:
-            return await self.say_scheduled(
-                when, text, attachments=attachments, blocks=blocks, thread_ts=self.ts, **kwargs
-            )
+            return await self.say_scheduled(when, text, attachments=attachments, blocks=blocks, thread_ts=self.ts, **kwargs)
         else:
             text = cast(str, self._create_reply(text))
             return await self.say_scheduled(when, text, attachments=attachments, blocks=blocks, **kwargs)
@@ -595,9 +621,7 @@ class Message:
         .. _attachments: https://api.slack.com/docs/message-attachments
         .. _blocks: https://api.slack.com/reference/block-kit/blocks
         """
-        return await self._client.send_dm_scheduled(
-            when, self.sender.id, text=text, attachments=attachments, blocks=blocks, **kwargs
-        )
+        return await self._client.send_dm_scheduled(when, self.sender.id, text=text, attachments=attachments, blocks=blocks, **kwargs)
 
     async def react(self, emoji: str) -> AsyncSlackResponse:
         """React to the original message
@@ -644,9 +668,7 @@ class Message:
         if self.channel.is_im:
             message = f"Message '{self.text}', sent by user @{self.sender.profile.real_name} in DM"
         else:
-            message = (
-                f"Message '{self.text}', sent by user @{self.sender.profile.real_name} in channel #{self.channel.name}"
-            )
+            message = f"Message '{self.text}', sent by user @{self.sender.profile.real_name} in channel #{self.channel.name}"
         return message
 
     def __repr__(self) -> str:

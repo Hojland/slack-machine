@@ -14,10 +14,10 @@ from slack_sdk.socket_mode.aiohttp import SocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 
 from machine.clients.slack import SlackClient
-from machine.handlers import create_message_handler, create_generic_event_handler
-from machine.models.core import Manual, HumanHelp, MessageHandler, RegisteredActions
+from machine.handlers import create_message_handler, create_generic_event_handler, create_block_actions_handler
+from machine.models.core import Manual, HumanHelp, MessageHandler, RegisteredActions, BlockActionHandler
 from machine.plugins.base import MachineBasePlugin
-from machine.plugins.decorators import DecoratedPluginFunc, Metadata, MatcherConfig
+from machine.plugins.decorators import DecoratedPluginFunc, Metadata, MatcherConfig, BlockActionMatcherConfig
 from machine.storage import PluginStorage, MachineBaseStorage
 from machine.settings import import_settings
 from machine.utils.collections import CaseInsensitiveDict
@@ -202,6 +202,16 @@ class Machine:
                 matcher_config=matcher_config,
                 class_help=class_help,
             )
+        for block_action_matcher_config in metadata.plugin_actions.block_action_react_to:
+            self._register_block_action_handler(
+                type_="block_action_react_to",
+                class_=cls_instance,
+                class_name=plugin_class_name,
+                fq_fn_name=fq_fn_name,
+                function=fn,
+                block_action_matcher_config=block_action_matcher_config,
+                class_help=class_help,
+            )
         for event in metadata.plugin_actions.process:
             self._registered_actions.process[event] = self._registered_actions.process.get(event, {})
             key = f"{fq_fn_name}-{event}"
@@ -241,6 +251,30 @@ class Machine:
         getattr(self._registered_actions, type_)[key] = handler
         self._help.robot[class_help].append(self._parse_robot_help(matcher_config, type_))
 
+    def _register_block_action_handler(
+        self,
+        type_: str,
+        class_: MachineBasePlugin,
+        class_name: str,
+        fq_fn_name: str,
+        function: Callable[..., Awaitable[None]],
+        block_action_matcher_config: BlockActionMatcherConfig,
+        class_help: str,
+    ) -> None:
+        signature = Signature.from_callable(function)
+        logger.debug("signature of handler", signature=signature, function=fq_fn_name)
+        action_id = block_action_matcher_config.action_id
+        handler = BlockActionHandler(
+            class_=class_,
+            class_name=class_name,
+            function=function,
+            function_signature=signature,
+            action_id=action_id,
+            handle_message_changed=block_action_matcher_config.handle_changed_message,
+        )
+        key = f"{fq_fn_name}-{action_id}"
+        getattr(self._registered_actions, type_)[key] = handler
+
     @staticmethod
     def _parse_human_help(doc: str) -> HumanHelp:
         summary = doc.splitlines()[0].split(":")
@@ -269,12 +303,12 @@ class Machine:
 
         bot_id = self._client.bot_info["user_id"]
         bot_name = self._client.bot_info["name"]
-        message_handler = create_message_handler(
-            self._registered_actions, self._settings, bot_id, bot_name, self._client
-        )
+        message_handler = create_message_handler(self._registered_actions, self._settings, bot_id, bot_name, self._client)
+        block_actions_handler = create_block_actions_handler(self._registered_actions, self._settings, bot_id, bot_name, self._client)
         generic_event_handler = create_generic_event_handler(self._registered_actions)
 
         self._client.register_handler(message_handler)
+        self._client.register_handler(block_actions_handler)
         self._client.register_handler(generic_event_handler)
         # Establish a WebSocket connection to the Socket Mode servers
         await self._socket_mode_client.connect()

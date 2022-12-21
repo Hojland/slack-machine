@@ -24,10 +24,17 @@ class MatcherConfig:
 
 
 @dataclass
+class BlockActionMatcherConfig:
+    action_id: str
+    handle_changed_message: bool
+
+
+@dataclass
 class PluginActions:
     process: list[str] = field(default_factory=list)
     listen_to: list[MatcherConfig] = field(default_factory=list)
     respond_to: list[MatcherConfig] = field(default_factory=list)
+    block_action_react_to: list[BlockActionMatcherConfig] = field(default_factory=list)
     schedule: dict[str, Any] | None = None
 
 
@@ -123,6 +130,28 @@ def respond_to(
         return fn
 
     return respond_to_decorator
+
+
+def block_action_react_to(name: str, handle_message_changed: bool = False) -> Callable[[Callable[P, R]], DecoratedPluginFunc[P, R]]:
+    """Listen to messages mentioning the bot and matching a regex pattern
+
+    This decorator will enable a Plugin method to react to actions created by the user for a block
+    The Plugin method will be called for each message that mentions the bot and matches the
+    specified name. The received :py:class:`~machine.plugins.base.Message` will be passed
+    to the method when called.
+
+    :param name: name of the block action to react to
+    :param handle_message_changed: if changed messages should trigger the decorated function
+    :return: wrapped method
+    """
+
+    def block_action_react_to_decorator(f: Callable[P, R]) -> DecoratedPluginFunc[P, R]:
+        fn = cast(DecoratedPluginFunc, f)
+        fn.metadata = getattr(f, "metadata", Metadata())
+        fn.metadata.plugin_actions.block_action_react_to.append(BlockActionMatcherConfig(name, handle_message_changed))
+        return fn
+
+    return block_action_react_to_decorator
 
 
 def schedule(
