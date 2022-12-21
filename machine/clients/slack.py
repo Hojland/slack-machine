@@ -111,14 +111,10 @@ class SlackClient:
         for u in all_users:
             self._register_user(u)
         logger.debug("Number of users found: %s", len(self._users))
-        logger.debug(
-            "Users: %s", ", ".join([f"{u.profile.display_name}|{u.profile.real_name}" for u in self._users.values()])
-        )
+        logger.debug("Users: %s", ", ".join([f"{u.profile.display_name}|{u.profile.real_name}" for u in self._users.values()]))
 
         all_channels: list[dict[str, Any]] = []
-        async for page in await self._client.web_client.conversations_list(
-            limit=500, types="public_channel,private_channel,mpim,im"
-        ):
+        async for page in await self._client.web_client.conversations_list(limit=500, types="public_channel,private_channel,mpim,im"):
             all_channels = all_channels + page["channels"]
         for c in all_channels:
             self._register_channel(c)
@@ -152,9 +148,7 @@ class SlackClient:
         logger.debug("Channel created: %s", channel)
 
     async def _on_channel_updated(self, event: dict[str, Any]) -> None:
-        logger.debug(
-            "channel_rename/channel_archive/channel_unarchive/group_rename/group_archive/group_unarchive: %s", event
-        )
+        logger.debug("channel_rename/channel_archive/channel_unarchive/group_rename/group_archive/group_unarchive: %s", event)
         if isinstance(event["channel"], dict):
             channel_id = event["channel"]["id"]
         else:
@@ -200,20 +194,14 @@ class SlackClient:
         if "ephemeral_user" in kwargs and kwargs["ephemeral_user"] is not None:
             ephemeral_user_id = id_for_user(kwargs["ephemeral_user"])
             del kwargs["ephemeral_user"]
-            return await self._client.web_client.chat_postEphemeral(
-                channel=channel_id, user=ephemeral_user_id, text=text, **kwargs
-            )
+            return await self._client.web_client.chat_postEphemeral(channel=channel_id, user=ephemeral_user_id, text=text, **kwargs)
         else:
             return await self._client.web_client.chat_postMessage(channel=channel_id, text=text, **kwargs)
 
-    async def send_scheduled(
-        self, when: datetime, channel: Channel | str, text: str, **kwargs: Any
-    ) -> AsyncSlackResponse:
+    async def send_scheduled(self, when: datetime, channel: Channel | str, text: str, **kwargs: Any) -> AsyncSlackResponse:
         channel_id = id_for_channel(channel)
         scheduled_ts = calculate_epoch(when, self._tz)
-        return await self._client.web_client.chat_scheduleMessage(
-            channel=channel_id, text=text, post_at=scheduled_ts, **kwargs
-        )
+        return await self._client.web_client.chat_scheduleMessage(channel=channel_id, text=text, post_at=scheduled_ts, **kwargs)
 
     async def react(self, channel: Channel | str, ts: str, emoji: str) -> AsyncSlackResponse:
         channel_id = id_for_channel(channel)

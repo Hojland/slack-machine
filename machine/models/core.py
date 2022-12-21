@@ -30,7 +30,18 @@ class MessageHandler:
 
 
 @dataclass
+class BlockActionHandler:
+    class_: MachineBasePlugin
+    class_name: str
+    function: Callable[..., Awaitable[None]]
+    function_signature: Signature
+    action_id: str
+    handle_message_changed: bool
+
+
+@dataclass
 class RegisteredActions:
     listen_to: dict[str, MessageHandler] = field(default_factory=dict)
     respond_to: dict[str, MessageHandler] = field(default_factory=dict)
     process: dict[str, dict[str, Callable[[dict[str, Any]], Awaitable[None]]]] = field(default_factory=dict)
+    block_action_react_to: dict[str, BlockActionHandler] = field(default_factory=dict)

@@ -12,10 +12,36 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
 from machine.clients.slack import SlackClient
-from machine.models.core import RegisteredActions, MessageHandler
+from machine.models.core import RegisteredActions, MessageHandler, BlockActionHandler
 from machine.plugins.base import Message
 
 logger = logging.getLogger(__name__)
+
+
+def create_block_actions_handler(
+    plugin_actions: RegisteredActions,
+    settings: Mapping,
+    bot_id: str,
+    bot_name: str,
+    slack_client: SlackClient,
+) -> Callable[[AsyncBaseSocketModeClient, SocketModeRequest], Awaitable[None]]:
+    async def block_actions_handler(client: AsyncBaseSocketModeClient, request: SocketModeRequest) -> None:
+        if request.type == "interactive":
+            # Acknowledge the request anyway
+            response = SocketModeResponse(envelope_id=request.envelope_id)
+            # Don't forget having await for method calls
+            await client.send_socket_mode_response(response)
+
+            type = request.payload["type"]
+            if type == "block_actions":
+                await handle_block_actions(
+                    payload=request.payload,
+                    plugin_actions=plugin_actions,
+                    slack_client=slack_client,
+                    log_handled_message=settings["LOG_HANDLED_MESSAGES"],
+                )
+
+    return block_actions_handler
 
 
 def create_message_handler(
@@ -112,9 +138,17 @@ async def handle_message(
             await dispatch_listeners(event, listeners, slack_client, log_handled_message)
 
 
-def _check_bot_mention(
-    event: dict[str, Any], bot_name: str, bot_id: str, message_matcher: re.Pattern[str]
-) -> dict[str, Any] | None:
+async def handle_block_actions(
+    payload: dict[str, Any],
+    plugin_actions: RegisteredActions,
+    slack_client: SlackClient,
+    log_handled_message: bool,
+) -> None:
+    listeners = list(plugin_actions.block_action_react_to.values())
+    await dispatch_block_action_listeners(payload, listeners, slack_client, log_handled_message)
+
+
+def _check_bot_mention(event: dict[str, Any], bot_name: str, bot_id: str, message_matcher: re.Pattern[str]) -> dict[str, Any] | None:
     full_text = event.get("text", "")
     channel_type = event["channel_type"]
     m = message_matcher.match(full_text)
@@ -144,8 +178,8 @@ def _check_bot_mention(
     return event
 
 
-def _gen_message(event: dict[str, Any], plugin_class_name: str, slack_client: SlackClient) -> Message:
-    return Message(slack_client, event, plugin_class_name)
+def _gen_message(event: dict[str, Any], plugin_class_name: str, slack_client: SlackClient, msg_type: str = "message") -> Message:
+    return Message(slack_client, event, plugin_class_name, msg_type)
 
 
 async def dispatch_listeners(
@@ -172,8 +206,32 @@ async def dispatch_listeners(
     return
 
 
-async def dispatch_event_handlers(
-    event: dict[str, Any], event_handlers: list[Callable[[dict[str, Any]], Awaitable[None]]]
+async def dispatch_block_action_listeners(
+    payload: dict[str, Any],
+    block_action_handlers: list[BlockActionHandler],
+    slack_client: SlackClient,
+    log_handled_message: bool,
 ) -> None:
+    handler_funcs = []
+    for handler in block_action_handlers:
+        action_id = handler.action_id
+        for action in payload["actions"]:
+            if action_id == action["action_id"]:
+                event = {"action": action, "user": payload["user"], "channel": payload["channel"]}
+                message = _gen_message(event, handler.class_name, slack_client, msg_type="interactive")
+                fq_fn_name = f"{handler.class_name}.{handler.function.__name__}"
+                handler_logger = get_logger(fq_fn_name)
+                handler_logger = handler_logger.bind(user_id=message.sender.id, user_name=message.sender.name)
+                if log_handled_message:
+                    handler_logger.info("Handling message", message=message.text)
+                extra_params = {}
+                if "logger" in handler.function_signature.parameters:
+                    extra_params["logger"] = handler_logger
+                handler_funcs.append(handler.function(message, **extra_params))
+    await asyncio.gather(*handler_funcs)
+    return
+
+
+async def dispatch_event_handlers(event: dict[str, Any], event_handlers: list[Callable[[dict[str, Any]], Awaitable[None]]]) -> None:
     handler_funcs = [f(event) for f in event_handlers]
     await asyncio.gather(*handler_funcs)
